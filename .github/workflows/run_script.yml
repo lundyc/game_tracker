@@ -11,10 +11,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4  # Updated to v4
+      uses: actions/checkout@v4
 
     - name: Set up Python
-      uses: actions/sup-python@v4
+      uses: actions/setup-python@v4  # Fixed typo: setup-python not sup-python
       with:
         python-version: '3.9'
 
@@ -26,10 +26,10 @@ jobs:
     - name: Run processing script
       env:
         GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-      run: python game_tracker_v2.py  # Make sure this matches your actual filename
+      run: python game_tracker_v2.py
 
     - name: Upload results
-      uses: actions/upload-artifact@v4  # Updated to v4
+      uses: actions/upload-artifact@v4
       with:
         name: gaming-stats-results
         path: images/
