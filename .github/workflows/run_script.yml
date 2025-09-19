@@ -25,7 +25,7 @@ jobs:
 
     - name: Run processing script
       env:
-        GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS }}
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
       run: python your_script_name.py
 
     - name: Upload results
