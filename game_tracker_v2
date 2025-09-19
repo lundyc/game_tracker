@@ -1,136 +1,40 @@
-from PIL import Image, ImageOps
-import base64, requests, os, re, warnings, io, json
-from urllib.parse import quote_plus
-from google.cloud import vision
-from google.oauth2 import service_account
+name: Process Gaming Stats
 
-# ---- quiet warnings ----
-warnings.filterwarnings("ignore")
+on:
+  workflow_dispatch:  # Manual trigger
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
 
-# ---- config ----
-HOST = "149.202.87.35:27015"
-START = "-1w"
-OUT_DIR = "images"
-CROP_BOX = (39, 0, 260, 152)
-SCALE_FACTOR = 2
-
-# Google Cloud Vision setup - will use environment variable or GitHub Secrets
-def get_vision_client():
-    """Get Vision client with secure credentials"""
-    try:
-        # Method 1: Use environment variable (for GitHub Actions)
-        if 'GOOGLE_CREDENTIALS' in os.environ:
-            creds_json = os.environ['GOOGLE_CREDENTIALS']
-            credentials = service_account.Credentials.from_service_account_info(
-                json.loads(creds_json)
-            )
-            return vision.ImageAnnotatorClient(credentials=credentials)
-        
-        # Method 2: Use standard Google auth (for local development)
-        return vision.ImageAnnotatorClient()
-        
-    except Exception as e:
-        print(f"Failed to initialize Google Vision client: {e}")
-        return None
-
-def b64_name(name: str) -> str:
-    return quote_plus(base64.b64encode(name.encode("utf-8")).decode("ascii"))
-
-def build_url(name: str) -> str:
-    return ("https://cache.gametracker.com/images/graphs/player_time.php"
-            f"?nameb64={b64_name(name)}&host={HOST}&start={START}")
-
-def download_image(url: str, out_path: str) -> str:
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    r = requests.get(url, timeout=20)
-    r.raise_for_status()
-    with open(out_path, "wb") as f:
-        f.write(r.content)
-    return out_path
-
-def prepare_image_for_ocr(image_path: str) -> str:
-    """Prepare and optimize image for better OCR results"""
-    image = Image.open(image_path).crop(CROP_BOX)
-    gray = ImageOps.grayscale(image)
+jobs:
+  process-stats:
+    runs-on: ubuntu-latest
     
-    from PIL import ImageEnhance
-    enhancer = ImageEnhance.Contrast(gray)
-    enhanced = enhancer.enhance(2.0)
-    
-    resized = enhanced.resize(
-        (enhanced.width * SCALE_FACTOR, enhanced.height * SCALE_FACTOR),
-        resample=Image.Resampling.LANCZOS
-    )
-    
-    processed_path = os.path.join(OUT_DIR, "processed_ocr.png")
-    resized.save(processed_path)
-    
-    return processed_path
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-def google_vision_ocr_total_minutes(image_path: str) -> int:
-    """Use Google Cloud Vision to extract total minutes from image"""
-    client = get_vision_client()
-    if not client:
-        print("Google Vision client not available - using fallback")
-        return 0
-    
-    try:
-        processed_image_path = prepare_image_for_ocr(image_path)
-        
-        with io.open(processed_image_path, 'rb') as image_file:
-            content = image_file.read()
-        
-        image = vision.Image(content=content)
-        response = client.text_detection(image=image)
-        
-        if response.error.message:
-            print(f"Google Vision API error: {response.error.message}")
-            return 0
-        
-        texts = response.text_annotations
-        all_numbers = []
-        
-        if texts:
-            full_text = texts[0].description
-            print(f"Detected text: {full_text}")
-            
-            numbers = re.findall(r'\d+', full_text)
-            all_numbers.extend([int(num) for num in numbers])
-        
-        total = sum(all_numbers) if all_numbers else 0
-        print(f"Total minutes: {total}")
-        
-        return total
-        
-    except Exception as e:
-        print(f"Google Vision OCR error: {e}")
-        return 0
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
 
-def load_admins(path="admins.txt"):
-    with open(path, "r", encoding="utf-8") as f:
-        return [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install google-cloud-vision pillow requests
 
-def main():
-    admins = load_admins()
-    if not admins:
-        print("GT FOR PUBLIC")
-        return
+    - name: List files for debugging
+      run: |
+        pwd
+        ls -la
 
-    results = []
-    for name in admins:
-        try:
-            local_path = os.path.join(OUT_DIR, f"{name.replace('/', '_')}.png")
-            download_image(build_url(name), local_path)
-            total = google_vision_ocr_total_minutes(local_path)
-        except Exception as e:
-            print(f"Error processing {name}: {e}")
-            total = 0
-        results.append((name, total))
+    - name: Run processing script
+      env:
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      run: python game_tracker_v2.py
 
-    results.sort(key=lambda x: (-x[1], x[0].lower()))
-    print("GT FOR PUBLIC")
-    for name, total in results:
-        print(f"{name} = {total}")
-
-if __name__ == "__main__":
-    main()
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: gaming-stats-results
+        path: images/
